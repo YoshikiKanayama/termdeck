@@ -179,11 +179,16 @@ slots_heal() {
   fi
 }
 
+# ペインの見出しを更新する。番号はスロット番号（右上=1 / 右下=2 / 左下=3）。
+# 番号は @deck_slot に持たせて枠線側で表示する。タイトル（リポジトリ名）は
+# 中のプログラムが書き換えることがあるが、番号はそれに巻き込まれない
 deck_retitle() {
+  local -A num=(s1 1 s2 2 s3 3)
   local slot p id
   for slot in s1 s2 s3; do
     p=$(slot_get "$slot")
     pane_alive "$p" || continue
+    t set -p -t "$p" @deck_slot "${num[$slot]}"
     id=$(pane_term "$p")
     if [[ -n "$id" ]]; then
       t select-pane -t "$p" -T "$(term_field "$id" repo)"
@@ -306,6 +311,11 @@ deck_build() {
 
   t resize-pane -t "$list" -x '30%'
   t select-pane -t "$list" -T "termdeck"
+  # 枠線の番号はスロット番号を出す（右上=1 / 右下=2 / 左下=3）。
+  # tmux の pane_index は位置と対応しないため、このウィンドウだけ表示を上書きする
+  t set -w -t "=$DECK_SESSION:main" pane-border-status top
+  t set -w -t "=$DECK_SESSION:main" pane-border-format \
+    " #{?pane_active,#[fg=colour39],#[fg=colour245]}#{?@deck_slot,#{@deck_slot}: ,}#{pane_title} "
   layout_save
 
   # リサイズしたら常に配置を控える（マウスドラッグも window_layout の変化として拾える）

@@ -54,6 +54,9 @@ assert_eq "s1 = delta" "$(slot s1)" "$(tpane 4)"
 assert_eq "s2 = charlie" "$(slot s2)" "$(tpane 3)"
 assert_eq "s3 = bravo" "$(slot s3)" "$(tpane 2)"
 assert_eq "ペインは4枚のまま" "$(pane_count)" "4"
+assert_eq "右上の枠番号は 1" "$(tt display -p -t "$(slot s1)" '#{@deck_slot}')" "1"
+assert_eq "右下の枠番号は 2" "$(tt display -p -t "$(slot s2)" '#{@deck_slot}')" "2"
+assert_eq "左下の枠番号は 3" "$(tt display -p -t "$(slot s3)" '#{@deck_slot}')" "3"
 alpha_pane=$(tpane 1)
 assert_eq "alpha は画面から消える" "$(in_main "$alpha_pane")" "0"
 assert_eq "alpha は stash で生きている" \
