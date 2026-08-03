@@ -1,0 +1,56 @@
+#!/bin/zsh
+# termdeck のリスト UI（2026-08-03）— deck 画面の左上ペインで動く
+#
+# fzf のループ。選ぶと deck open が呼ばれて右上に出る。
+# フックが状態を更新すると ctrl-r（reload）がこのペインに送られ、表示が追従する。
+set -u
+
+DECK_ROOT="${0:A:h:h}"
+DECK="$DECK_ROOT/bin/deck"
+
+command -v fzf >/dev/null 2>&1 || { print "fzf が必要です: brew install fzf" >&2; exit 1 }
+
+HEADER=$'Enter/ダブルクリック: 開く   ^N: 新規   ^K: 削除\n^S: 再起動後に復元する/しない   ^R: 更新   ^Q: 終了'
+
+while true; do
+  out=$(zsh "$DECK" ls 2>/dev/null | fzf \
+    --ansi --delimiter '\t' --with-nth 2 --nth 2 \
+    --layout=reverse --no-sort --info=hidden --no-separator \
+    --header "$HEADER" --prompt='termdeck > ' \
+    --expect=ctrl-n,ctrl-s,ctrl-k,ctrl-q \
+    --bind "ctrl-r:reload(zsh ${(q)DECK} ls 2>/dev/null)" \
+    --preview "zsh ${(q)DECK} status --term {1}" \
+    --preview-window=down,45%,wrap) || true
+
+  key="${out%%$'\n'*}"
+  sel="${out#*$'\n'}"
+  [[ "$sel" == "$out" ]] && sel=""   # 選択行なし（一覧が空・Esc など）
+  id="${sel%%$'\t'*}"
+
+  case "$key" in
+    ctrl-q)
+      print "リストを終了しました（再開: deck-list）"
+      exit 0
+      ;;
+    ctrl-n)
+      zsh "$DECK" new || true
+      ;;
+    ctrl-s)
+      if [[ -n "$id" ]]; then
+        if [[ "$(zsh "$DECK" status --resume-flag "$id")" == "true" ]]; then
+          zsh "$DECK" stop "$id"
+        else
+          zsh "$DECK" keep "$id"
+        fi
+        sleep 0.7   # メッセージを読める程度に見せる
+      fi
+      ;;
+    ctrl-k)
+      [[ -n "$id" ]] && zsh "$DECK" kill "$id"
+      ;;
+    *)
+      [[ -n "$id" ]] && zsh "$DECK" open "$id"
+      ;;
+  esac
+  sleep 0.1   # Esc 連打などでループが暴走しないように
+done

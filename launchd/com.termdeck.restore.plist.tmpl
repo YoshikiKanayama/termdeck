@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- ログイン時に deck restore を実行し、前回のターミナル群を claude --resume 込みで立て直す。
+       install.sh が __DECK_ROOT__ / __STATE__ を実パスに置換して ~/Library/LaunchAgents に置く -->
+  <key>Label</key>
+  <string>com.termdeck.restore</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>exec zsh '__DECK_ROOT__/bin/deck' restore</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>__STATE__/launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>__STATE__/launchd.log</string>
+</dict>
+</plist>

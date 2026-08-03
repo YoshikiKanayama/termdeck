@@ -1,0 +1,27 @@
+#!/bin/zsh
+# deck — termdeck の入口（2026-08-03）。実装は lib/core.zsh
+set -u
+
+DECK_ROOT="${0:A:h:h}"
+source "$DECK_ROOT/lib/core.zsh"
+
+need tmux
+need jq
+
+cmd="${1:-attach}"
+(( $# )) && shift
+
+case "$cmd" in
+  attach)          cmd_attach "$@" ;;
+  new)             cmd_new "$@" ;;
+  open)            cmd_open "$@" ;;
+  stop)            cmd_stop "$@" ;;
+  keep)            cmd_keep "$@" ;;
+  kill)            cmd_kill "$@" ;;
+  restore)         cmd_restore "$@" ;;
+  status)          cmd_status "$@" ;;
+  ls)              cmd_ls "$@" ;;
+  save-layout)     layout_save ;;
+  help|-h|--help)  usage ;;
+  *)               usage; exit 1 ;;
+esac
