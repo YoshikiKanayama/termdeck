@@ -98,6 +98,22 @@ assert_eq "記録が消えている" "$([[ -f "$DECK_STATE_DIR/terminals/3.json"
 print "── MRU 順が記録されている ──"
 assert_eq "mru の先頭は alpha(1)" "$(head -1 "$DECK_STATE_DIR/mru")" "1"
 
+print "── exit してもペインが残って新しいシェルが入る ──"
+s1p=$(slot s1)
+tt send-keys -t "$s1p" " exit" C-m
+sleep 1.5
+assert_eq "exit したペインが生きている" "$(tt display -p -t "$s1p" '#{pane_id}' 2>/dev/null)" "$s1p"
+assert_eq "死んだままではなく新しいシェルが入っている" "$(tt display -p -t "$s1p" '#{pane_dead}')" "0"
+assert_eq "ペインは4枚のまま" "$(pane_count)" "4"
+
+print "── kill-pane で壊れても開き直しで組み直る ──"
+tt kill-pane -t "$(slot s2)"
+zsh "$DECK" open 1 >/dev/null
+assert_eq "ペインが4枚に戻る" "$(pane_count)" "4"
+assert_eq "s1 = alpha（復活して右上）" "$(slot s1)" "$(tpane 1)"
+assert_eq "枠番号 1/2/3 が揃っている" \
+  "$(tt display -p -t "$(slot s1)" '#{@deck_slot}')$(tt display -p -t "$(slot s2)" '#{@deck_slot}')$(tt display -p -t "$(slot s3)" '#{@deck_slot}')" "123"
+
 print ""
 print "結果: ✅ $pass / ✗ $fail"
 (( fail == 0 ))

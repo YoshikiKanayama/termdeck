@@ -117,10 +117,17 @@ pane_term() { t display -p -t "$1" '#{@deck_term}' 2>/dev/null }
 
 session_exists() { t has-session -t "=$1" 2>/dev/null }
 
+# exit してもペインの枠を残す。pane-died フックがすぐ新しいシェル（または元のコマンド）を
+# 入れ直すので、画面が崩れない。ターミナルを消す操作は deck kill（^K）に一本化する
+keep_alive() { t set -w -t "$1" remain-on-exit on 2>/dev/null }
+
 ensure_stash() {
   session_exists "$DECK_STASH" && return 0
   # 番兵ウィンドウ "keep" を残す。全ターミナルを画面に出してもセッションが消えないように
   t new-session -d -s "$DECK_STASH" -n keep -c "$DECK_SRC"
+  keep_alive "=$DECK_STASH:keep"
+  # set-hook は "=名前" の完全一致指定を受け付けない（素の名前で渡す）
+  t set-hook -t "$DECK_STASH" pane-died "respawn-pane -k"
 }
 
 # 死んだターミナルを stash に立て直す。claude のセッションが記録されていれば履歴ごと復活させる
@@ -130,6 +137,7 @@ term_revive() {  # <id> → 新しい pane_id を stdout
   ensure_stash
   pane=$(t new-window -d -P -F '#{pane_id}' -t "=$DECK_STASH:" -c "$cwd" -n "${cwd:t}") || return 1
   t set -p -t "$pane" @deck_term "$id"
+  keep_alive "$pane"
   if [[ "$(term_field "$id" resume)" == "true" && -n "$sid" ]]; then
     t send-keys -t "$pane" "claude --resume ${(q)sid}" C-m
     term_update "$id" pane_id "$pane" status waiting
@@ -160,23 +168,34 @@ layout_apply() {
   return 0
 }
 
-# スロットのペインが消えていたら（プレースホルダで exit した等）空きペインで埋め直す
+# スロットのペインが消えていたら（kill-pane された等）、標準の4分割を組み直す。
+# 生き残っている表示中ターミナルはいったん stash に退避する（リストから開き直せる）。
+# 通常は remain-on-exit + pane-died フックがペインの死そのものを防ぐので、ここは保険
 slots_heal() {
   local list=$(slot_get list) s1=$(slot_get s1) s2=$(slot_get s2) s3=$(slot_get s3)
-  local slot p changed=0
   pane_alive "$list" || die "リストのペインが見つかりません。tmux kill-session -t $DECK_SESSION してから deck をやり直してください"
-  for slot in s1 s2 s3; do
-    p=${(P)slot}
-    if ! pane_alive "$p"; then
-      p=$(t split-window -d -P -F '#{pane_id}' -v -t "$list" -c "$DECK_SRC")
-      case "$slot" in s1) s1=$p ;; s2) s2=$p ;; s3) s3=$p ;; esac
-      changed=1
-    fi
-  done
-  if (( changed )); then
+  pane_alive "$s1" && pane_alive "$s2" && pane_alive "$s3" && return 0
+
+  touch "$STATE/.rotating"
+  {
+    local p
+    for p in $(t list-panes -t "=$DECK_SESSION:main" -F '#{pane_id}'); do
+      [[ "$p" == "$list" ]] && continue
+      if [[ -n "$(pane_term "$p")" ]]; then
+        ensure_stash
+        t break-pane -d -s "$p" -t "=$DECK_STASH:"
+        keep_alive "$p"
+      else
+        t kill-pane -t "$p"
+      fi
+    done
+    s1=$(t split-window -d -P -F '#{pane_id}' -h -t "$list" -c "$DECK_SRC")
+    s2=$(t split-window -d -P -F '#{pane_id}' -v -t "$s1" -c "$DECK_SRC")
+    s3=$(t split-window -d -P -F '#{pane_id}' -v -t "$list" -c "$DECK_SRC")
     slots_write "$list" "$s1" "$s2" "$s3"
     layout_apply
-  fi
+    deck_retitle
+  } always { rm -f "$STATE/.rotating" }
 }
 
 # ペインの見出しを更新する。番号はスロット番号（右上=1 / 右下=2 / 左下=3）。
@@ -244,6 +263,7 @@ cmd_open() {
       if [[ -n "$(pane_term "$s3")" ]]; then
         ensure_stash
         t break-pane -d -s "$s3" -t "=$DECK_STASH:"   # 登録済みターミナルは stash へ帰す
+        keep_alive "$s3"
       else
         t kill-pane -t "$s3"                          # 空きペインは使い捨て
       fi
@@ -286,6 +306,7 @@ cmd_new() {
   pane=$(t new-window -d -P -F '#{pane_id}' -t "=$DECK_STASH:" -c "$dir" -n "${dir:t}") \
     || die "tmux ウィンドウを作れませんでした"
   t set -p -t "$pane" @deck_term "$id"
+  keep_alive "$pane"
   term_create "$id" "$dir" "$pane"
   mru_touch "$id"
 
@@ -302,12 +323,23 @@ cmd_new() {
 
 deck_build() {
   local list s1 s2 s3
-  t new-session -d -s "$DECK_SESSION" -n main -c "$DECK_SRC" -x 220 -y 60
+  # リストペインはシェルではなく deck-list そのものを走らせる。
+  # こうすると pane-died フックの respawn-pane が「元のコマンド」= deck-list を
+  # 再起動するので、リストが落ちても勝手に復活する
+  local -a envopts=(-e "DECK_STATE_DIR=$STATE" -e "DECK_SRC=$DECK_SRC")
+  [[ -n "${DECK_TMUX_SOCKET:-}" ]] && envopts+=(-e "DECK_TMUX_SOCKET=$DECK_TMUX_SOCKET")
+  t new-session -d -s "$DECK_SESSION" -n main -c "$DECK_SRC" -x 220 -y 60 \
+    "${envopts[@]}" "zsh '$DECK_ROOT/bin/deck-list'"
   list=$(t display -p -t "=$DECK_SESSION:main" '#{pane_id}')
   s1=$(t split-window -d -P -F '#{pane_id}' -h -t "$list" -c "$DECK_SRC")
   s2=$(t split-window -d -P -F '#{pane_id}' -v -t "$s1" -c "$DECK_SRC")
   s3=$(t split-window -d -P -F '#{pane_id}' -v -t "$list" -c "$DECK_SRC")
   slots_write "$list" "$s1" "$s2" "$s3"
+
+  # exit ではペインを閉じさせない（枠が崩れないように）。消すのは deck kill だけ。
+  # set-hook は "=名前" の完全一致指定を受け付けない（素の名前で渡す）
+  keep_alive "=$DECK_SESSION:main"
+  t set-hook -t "$DECK_SESSION" pane-died "respawn-pane -k"
 
   t resize-pane -t "$list" -x '30%'
   t select-pane -t "$list" -T "termdeck"
@@ -322,12 +354,6 @@ deck_build() {
   local hookcmd="DECK_STATE_DIR='$STATE' zsh '$DECK_ROOT/bin/deck' save-layout"
   [[ -n "${DECK_TMUX_SOCKET:-}" ]] && hookcmd="DECK_TMUX_SOCKET='$DECK_TMUX_SOCKET' $hookcmd"
   t set-hook -t "=$DECK_SESSION" window-layout-changed "run-shell \"$hookcmd\"" 2>/dev/null
-
-  # リスト UI（クラッシュしてもシェルに戻れるよう exec はしない）
-  local listcmd="DECK_STATE_DIR='$STATE' DECK_SRC='$DECK_SRC'"
-  [[ -n "${DECK_TMUX_SOCKET:-}" ]] && listcmd+=" DECK_TMUX_SOCKET='$DECK_TMUX_SOCKET'"
-  listcmd+=" zsh '$DECK_ROOT/bin/deck-list'"
-  t send-keys -t "$list" "clear; $listcmd" C-m
 
   deck_populate
   deck_retitle
@@ -353,9 +379,29 @@ deck_populate() {
 
 cmd_attach() {
   state_init
-  session_exists "$DECK_SESSION" || deck_build
-  if [[ -t 0 ]]; then
-    exec t attach -t "=$DECK_SESSION"
+  if session_exists "$DECK_SESSION"; then
+    # 壊れた画面にそのまま入らない。接続前に直す
+    local list=$(slot_get list)
+    if pane_alive "$list"; then
+      slots_heal
+      deck_retitle
+    else
+      # リストごと失われている → 組み立て直す（ターミナルは state から復元される）
+      t kill-session -t "=$DECK_SESSION" 2>/dev/null
+      deck_build
+    fi
+  else
+    deck_build
+  fi
+
+  # t はシェル関数なので exec できない。実コマンドの配列を組んで exec する
+  local -a tcmd=(tmux)
+  [[ -n "${DECK_TMUX_SOCKET:-}" ]] && tcmd+=(-L "$DECK_TMUX_SOCKET")
+  if [[ -n "${TMUX:-}" ]]; then
+    # tmux の中から呼ばれたら attach ではなく画面の切り替え（nested attach は失敗する）
+    exec "${tcmd[@]}" switch-client -t "=$DECK_SESSION"
+  elif [[ -t 0 ]]; then
+    exec "${tcmd[@]}" attach -t "=$DECK_SESSION"
   else
     print "セッション $DECK_SESSION を用意しました（接続: deck）"
   fi
