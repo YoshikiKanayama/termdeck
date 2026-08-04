@@ -115,6 +115,65 @@ mru_list() { [[ -f "$STATE/mru" ]] && cat "$STATE/mru"; return 0 }
 pane_alive() { [[ -n "$1" && "$(t display -p -t "$1" '#{pane_id}' 2>/dev/null)" == "$1" ]] }
 pane_term() { t display -p -t "$1" '#{@deck_term}' 2>/dev/null }
 
+# ─────────────────────────────────────────────────────────────
+# 実状態の判定
+#
+# フックは「イベントが起きた瞬間」しか書けない。承認ダイアログに答えて作業が
+# 再開しても対応するフックが無いため、status は貼り付いたままになり、
+# 「作業中」と「止まっている」が一覧で見分けられなくなる。
+# そこで claude の画面そのもの（ペイン末尾）を正とする。実物で確かめた見分け:
+#
+#   実行中          モード行に中断の案内が並ぶ（… auto mode on … · esc to interrupt · …）
+#   プロンプト待ち   モード行だけ（… manual mode on · ? for shortcuts · …）
+#   質問            AskUserQuestion のダイアログ。
+#                   フッターが「Enter to select · …/… to navigate · Esc to cancel」で、
+#                   選択肢に必ず「Type something.」「Chat about this」が付く
+#   承認・プラン確認 ツール承認は「Do you want to …?」＋「Esc to cancel · Tab to amend」、
+#                   プラン確認は「Would you like to proceed?」＋「shift+tab to approve …」。
+#                   どちらも Enter to select は出ない
+#
+# 見分けの軸はモード行。ダイアログが開いている間はモード行が隠れるので、
+# 「モード行が見える＝ダイアログは無い」を先に確定させてから種類を見に行く
+#
+# どれとも読めなければ "" を返し、従来どおりフックが書いた status に任せる
+# （claude ではないシェル、Claude Code 側の文言変更、どちらも安全側に倒れる）
+# ─────────────────────────────────────────────────────────────
+
+pane_claude_state() {  # <pane_id> → working | question | approval | waiting | ""
+  local pane="${1:-}" foot mode
+  [[ -n "$pane" ]] || return 0
+  # 画面の下の方だけを見る。上に流れた本文の文字列で誤判定しないため。
+  # ctrl+t のタスク一覧がフッターの下に出ることがあるので、少し広めに取る
+  foot=$(t capture-pane -p -t "$pane" 2>/dev/null | grep -v '^[[:space:]]*$' | tail -n 14)
+  [[ -n "$foot" ]] || return 0
+
+  # モード行（「auto mode on」「manual mode on」…）が見えている＝ダイアログは開いていない。
+  # 実行中は同じ行に中断の案内が並ぶ（例: ⏵⏵ auto mode on … · esc to interrupt · ← 1 agent）
+  mode=$(print -r -- "$foot" | grep -m1 'mode on')
+  if [[ -n "$mode" ]]; then
+    [[ "$mode" == *"to interrupt"* ]] && print working || print waiting
+    return 0
+  fi
+
+  # モード行が隠れている＝何かのダイアログで止まっている。その種類を見分ける
+  case "$foot" in
+    *"Enter to select"*|*"Chat about this"*|*"Type something."*) print question ;;
+    *"Do you want to"*|*"Would you like to"*|*"Tab to amend"*|*"to approve"*) print approval ;;
+    *"❯ "[0-9].*) print approval ;;   # 種類までは読めないが選択肢は出ている
+  esac
+  return 0
+}
+
+# 表示に使う状態。ペインから読み取れた実状態を優先し、駄目ならフックの記録を使う
+term_status() {  # <id>
+  local id="${1:-}" pane live=""
+  pane=$(term_field "$id" pane_id)
+  if pane_alive "$pane" && [[ "$(pane_term "$pane")" == "$id" ]]; then
+    live=$(pane_claude_state "$pane")
+  fi
+  print -r -- "${live:-$(term_field "$id" status)}"
+}
+
 session_exists() { t has-session -t "=$1" 2>/dev/null }
 
 # exit してもペインの枠を残す。pane-died フックがすぐ新しいシェル（または元のコマンド）を
@@ -486,7 +545,9 @@ cmd_kill() {
 status_label() {
   case "$1" in
     working)     print "🟢 作業中" ;;
-    needs_input) print "🔴 要入力" ;;
+    approval)    print "🟠 承認待ち" ;;   # Yes/No・プラン確認。だいたい Yes を押すだけ
+    question)    print "🔵 質問" ;;       # claude が選択肢を出して聞いている
+    needs_input) print "🔴 要入力" ;;     # 種類不明で止まっている（フックの記録ぶん）
     waiting)     print "🟡 入力待ち" ;;
     shell)       print "⚪ シェル" ;;
     ended)       print "⚫ 終了" ;;
@@ -499,7 +560,7 @@ term_detail() {  # fzf のプレビューに出す詳細
   [[ -f "$f" ]] || { print "（記録なし）"; return 0 }
   local pane=$(term_field "$id" pane_id) live="いいえ（開くと復活）"
   pane_alive "$pane" && [[ "$(pane_term "$pane")" == "$id" ]] && live="はい"
-  print -r -- "■ $(term_field "$id" repo)   $(status_label "$(term_field "$id" status)")"
+  print -r -- "■ $(term_field "$id" repo)   $(status_label "$(term_status "$id")")"
   print -r -- "  場所      $(term_field "$id" cwd)"
   print -r -- "  生存      $live"
   print -r -- "  再起動後  $([[ $(term_field "$id" resume) == true ]] && print 復元する || print 復元しない)"
@@ -518,32 +579,40 @@ cmd_status() {
   esac
   local id
   for id in $(all_ids); do
-    printf "%3s  %-14s %-24s %s\n" "$id" "$(status_label "$(term_field "$id" status)")" \
+    printf "%3s  %-14s %-24s %s\n" "$id" "$(status_label "$(term_status "$id")")" \
       "$(term_field "$id" repo)" "$(term_field "$id" last_prompt | cut -c1-60)"
   done
 }
 
 # fzf に食わせる行: "<id>\t<表示>"。MRU 順 → 残りは番号順
+# 見張り（deck-list の裏のループ）が数秒ごとに呼ぶので、1ターミナル 1 jq に抑える
 cmd_ls() {
   local s1=$(slot_get s1) s2=$(slot_get s2) s3=$(slot_get s3)
   local -a order=($(mru_list))
-  local id seen p mark icon prompt
+  local id mark live
+  local -a rec
   for id in $(all_ids); do
     (( ${order[(Ie)$id]} )) || order+=("$id")
   done
   for id in $order; do
     [[ -f "$(term_file "$id")" ]] || continue
-    p=$(term_field "$id" pane_id)
-    case "$p" in
+    # pane_id / status / 頼んだこと / repo を 1 回の jq でまとめて取り出す。
+    # 空になりうる「頼んだこと」を末尾に置くと行ごと落ちるので、repo を最後にする
+    rec=("${(@f)$(jq -r '[ .pane_id, .status,
+                           ((.last_prompt // "") | gsub("\\s+"; " ") | .[0:80]),
+                           .repo ] | .[]' "$(term_file "$id")" 2>/dev/null)}")
+    (( ${#rec} >= 3 )) || continue
+    case "${rec[1]}" in
       "$s1") mark="▶1" ;;
       "$s2") mark=" 2" ;;
       "$s3") mark=" 3" ;;
-      *) if pane_alive "$p" && [[ "$(pane_term "$p")" == "$id" ]]; then mark="  "; else mark=" ×"; fi ;;
+      *) if pane_alive "${rec[1]}" && [[ "$(pane_term "${rec[1]}")" == "$id" ]]; then mark="  "; else mark=" ×"; fi ;;
     esac
-    icon=$(status_label "$(term_field "$id" status)")
-    prompt=$(term_field "$id" last_prompt | tr -d '\000-\037' | cut -c1-80)
+    # 生きているペインなら画面から読んだ実状態を、駄目ならフックの記録を出す
+    live=""
+    [[ "$mark" != " ×" ]] && live=$(pane_claude_state "${rec[1]}")
     printf "%s\t%s %s  \033[1m%s\033[0m  \033[2m%s\033[0m\n" \
-      "$id" "$mark" "$icon" "$(term_field "$id" repo)" "$prompt"
+      "$id" "$mark" "$(status_label "${live:-${rec[2]}}")" "${rec[4]:-?}" "${rec[3]:-}"
   done
 }
 

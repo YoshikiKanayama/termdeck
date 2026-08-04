@@ -66,8 +66,9 @@ case "$event" in
   Notification)
     nt=$(print -r -- "$input" | jq -r '.notification_type // ""')
     case "$nt" in
-      permission_prompt|elicitation_dialog) upd status needs_input ;;
-      idle_prompt)                          upd status waiting ;;
+      permission_prompt)                     upd status approval ;;
+      elicitation_dialog|agent_needs_input)   upd status needs_input ;;
+      idle_prompt)                            upd status waiting ;;
     esac
     ;;
 esac
