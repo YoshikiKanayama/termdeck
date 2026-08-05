@@ -123,9 +123,11 @@ set_status() {  # <id> <status>
 }
 state_of() { zsh "$DECK" status 2>/dev/null | awk -v id="$1" '$1==id {print $3}' }
 show() {  # <pane> <画面に出す行>...  ※clear で前の行を残さない
+  # ペインの中で動くのは tmux の default-shell（CI では bash や sh のこともある）。
+  # zsh 専用の print ではなく printf を使う
   local pane="$1" cmd="clear" l
   shift
-  for l in "$@"; do cmd+=" && print -r -- ${(q)l}"; done
+  for l in "$@"; do cmd+=" && printf '%s\\n' ${(q)l}"; done
   tt send-keys -t "$pane" "$cmd" C-m
   sleep 1
 }
