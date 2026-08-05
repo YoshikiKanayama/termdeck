@@ -66,14 +66,18 @@ case "$event" in
   Notification)
     nt=$(print -r -- "$input" | jq -r '.notification_type // ""')
     case "$nt" in
-      permission_prompt|elicitation_dialog) upd status needs_input ;;
-      idle_prompt)                          upd status waiting ;;
+      permission_prompt)                     upd status approval ;;
+      elicitation_dialog|agent_needs_input)   upd status needs_input ;;
+      idle_prompt)                            upd status waiting ;;
     esac
     ;;
 esac
 
-# 一覧をその場で更新（リストペインの fzf に ctrl-r = reload を送る）
+# 一覧をその場で更新（リストペインの fzf に ctrl-r = reload を送る）。
+# copy-mode 中は tmux が ^R を横取りして検索プロンプト（黄色い帯）を開くので送らない
 lp=$(jq -r '.list // ""' "$STATE/slots.json" 2>/dev/null)
-[[ -n "$lp" ]] && tmux send-keys -t "$lp" C-r 2>/dev/null
+if [[ -n "$lp" && "$(tmux display -p -t "$lp" '#{pane_in_mode}' 2>/dev/null)" == 0 ]]; then
+  tmux send-keys -t "$lp" C-r 2>/dev/null
+fi
 
 exit 0

@@ -6,7 +6,7 @@
 - [x] lib/core.zsh — 状態ファイル・スロット・MRU・tmux ラッパー
 - [x] deck new / stash モデル（deck-stash セッション + @deck_term）
 - [x] deck open — MRU 玉突き（join/break/swap + window_layout 再適用）
-- [x] tests/rotate-test.zsh — 使い捨て tmux サーバで 26 アサーション全緑
+- [x] tests/rotate-test.zsh — 使い捨て tmux サーバで 39 アサーション全緑
 - [x] bin/deck-list — fzf リスト UI（Enter/クリックで開く・^N 新規・^S 復元切替・^K 削除）
 - [x] hooks/deck-claude-status.sh — 状態 / 頼んだこと / 結果サマリの記録
 - [x] deck restore / stop / keep / kill + LaunchAgent テンプレート
@@ -15,6 +15,11 @@
 - [ ] 実環境での動作確認（deck 起動 → new → claude 状態反映 → 復元）
 - [ ] コミット（termdeck 初回 / devkit 巻き取り分）※ユーザー確認後
 - [ ] GitHub public リポジトリ作成と push ※ユーザー確認後
+- [x] 状態表示の修正（2026-08-04）— フックだけでは「作業中」と「本当に入力待ち」が
+      分離できず 🔴 要入力 が貼り付いていた。`capture-pane` でペイン末尾を読んで
+      判定し、一覧は見張りで数秒ごとに追随させる
+- [x] 止まっている理由を 🟠 承認待ち（Yes/No・プラン確認）と 🔵 質問
+      （AskUserQuestion）に分割（2026-08-04）。判定の軸はモード行の有無
 
 ## 見送り（将来）
 - 結果サマリの本物の要約（claude -p を一段挟む。API コストが掛かるため）

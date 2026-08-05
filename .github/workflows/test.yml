@@ -1,0 +1,37 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  rotate-test:
+    # termdeck は macOS 前提のツール（自動復元が LaunchAgent）。
+    # tmux の挙動もバージョン差が出るため、実際に使う環境に寄せて macOS で回す。
+    # Ubuntu の tmux 3.4 では remain-on-exit + pane-died の respawn が効かなかった
+    runs-on: macos-latest
+    timeout-minutes: 15
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_INSTALL_CLEANUP: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      # tmux: 画面の組み立てそのもの / fzf: リストペインが起動時に要求する
+      # （zsh と jq は macOS ランナーに最初から入っている）
+      - name: 依存を入れる
+        run: |
+          brew install tmux fzf
+          tmux -V
+          jq --version
+
+      - name: 構文チェック
+        run: |
+          for f in bin/deck bin/deck-list lib/core.zsh hooks/deck-claude-status.sh install.sh tests/rotate-test.zsh; do
+            zsh -n "$f" || exit 1
+          done
+
+      # 使い捨ての tmux サーバと状態ディレクトリで走るので、後片付けは不要
+      - name: 玉突き・状態判定のテスト
+        run: zsh tests/rotate-test.zsh

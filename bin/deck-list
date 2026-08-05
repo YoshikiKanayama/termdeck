@@ -13,10 +13,40 @@ command -v fzf >/dev/null 2>&1 || { print "fzf が必要です: brew install fzf
 
 HEADER=$'Enter/ダブルクリック: 開く   ^N: 新規   ^K: 削除\n^S: 再起動後に復元する/しない   ^R: 更新'
 
+# ── 状態の見張り ──
+# フックが飛ぶのは「プロンプト送信 / 応答完了 / 通知」の瞬間だけなので、
+# 「承認に答えて作業が再開した」のような遷移は誰も知らせてくれない。
+# 一覧の中身が実際に変わったときだけ reload（^R）を送って追随させる。
+# 表示が変わらない間は何も送らないので、カーソルはむやみに動かない
+tmux_() {
+  if [[ -n "${DECK_TMUX_SOCKET:-}" ]]; then command tmux -L "$DECK_TMUX_SOCKET" "$@"
+  else command tmux "$@"; fi
+}
+
+if [[ -n "${TMUX_PANE:-}" ]]; then
+  parent=$$
+  (
+    prev=$(zsh "$DECK" ls 2>/dev/null)
+    while kill -0 $parent 2>/dev/null; do
+      sleep "${DECK_WATCH_INTERVAL:-3}"
+      # 誰も見ていない（デタッチ中）なら回さない
+      [[ "$(tmux_ display -p -t "$TMUX_PANE" '#{session_attached}' 2>/dev/null)" == 0 ]] && continue
+      # copy-mode 中は ^R を tmux が横取りして検索プロンプト（黄色い帯）を開くので送らない
+      [[ "$(tmux_ display -p -t "$TMUX_PANE" '#{pane_in_mode}' 2>/dev/null)" == 0 ]] || continue
+      cur=$(zsh "$DECK" ls 2>/dev/null)
+      [[ "$cur" == "$prev" ]] && continue
+      prev="$cur"
+      tmux_ send-keys -t "$TMUX_PANE" C-r 2>/dev/null
+    done
+  ) &
+  watcher=$!
+  trap 'kill $watcher 2>/dev/null' EXIT INT TERM
+fi
+
 while true; do
   out=$(zsh "$DECK" ls 2>/dev/null | fzf \
     --ansi --delimiter '\t' --with-nth 2 --nth 2 \
-    --layout=reverse --no-sort --info=hidden --no-separator \
+    --layout=reverse --no-sort --info=hidden --no-separator --track \
     --header "$HEADER" --prompt='termdeck > ' \
     --expect=ctrl-n,ctrl-s,ctrl-k \
     --bind "ctrl-r:reload(zsh ${(q)DECK} ls 2>/dev/null)" \
