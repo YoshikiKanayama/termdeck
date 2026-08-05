@@ -163,6 +163,18 @@ show "$p1" '  Do you want to proceed? と聞かれたら Yes を押してくだ�
            '⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent'
 assert_eq "本文の文言に釣られない（モード行が優先）" "$(state_of 1)" "入力待ち"
 
+print "── copy-mode 中のペインには ^R を送らない ──"
+# 送ると tmux が ^R を横取りして検索プロンプト（画面下の黄色い帯 "(search up)"）を開く
+idle_check() {  # <pane> → yes/no
+  ( DECK_ROOT="$ROOT" source "$ROOT/lib/core.zsh"; pane_idle "$1" && print yes || print no )
+}
+listp=$(slot list)
+assert_eq "素のペインには送ってよい" "$(idle_check "$listp")" "yes"
+tt copy-mode -t "$listp"
+assert_eq "copy-mode 中は送らない" "$(idle_check "$listp")" "no"
+tt send-keys -X -t "$listp" cancel
+assert_eq "抜ければまた送る" "$(idle_check "$listp")" "yes"
+
 print ""
 print "結果: ✅ $pass / ✗ $fail"
 (( fail == 0 ))

@@ -276,12 +276,20 @@ deck_retitle() {
   done
 }
 
-# 一覧の再描画を促す（fzf の ctrl-r = reload を送る）
+# 一覧の再描画を促す（fzf の ctrl-r = reload を送る）。
+# ただし copy-mode 中のペインに送ってはいけない。tmux が ^R を横取りして
+# 検索プロンプト（画面下の黄色い帯 "(search up)"）を開いてしまう。
+# 送らなくても、copy-mode を抜けたあと見張りが次の更新で追いつく
 list_refresh() {
   local lp=$(slot_get list)
-  [[ -n "$lp" ]] && t send-keys -t "$lp" C-r 2>/dev/null
+  [[ -n "$lp" ]] || return 0
+  pane_idle "$lp" || return 0
+  t send-keys -t "$lp" C-r 2>/dev/null
   return 0
 }
+
+# ペインが素の状態か（copy-mode などに入っていないか）
+pane_idle() { [[ "$(t display -p -t "$1" '#{pane_in_mode}' 2>/dev/null)" == 0 ]] }
 
 # ─────────────────────────────────────────────────────────────
 # deck open — MRU 玉突き

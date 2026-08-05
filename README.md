@@ -140,7 +140,8 @@ deck status       一覧をテキストで表示
 - 玉突き = `join-pane` / `break-pane` / `swap-pane`。リサイズ保持 = `window_layout` 文字列の保存と再適用
 - 記録 = `~/.local/state/termdeck/` の JSON。Claude Code の hooks（`SessionStart` / `UserPromptSubmit` / `Stop` / `Notification`）が `TMUX_PANE` を鍵に書き込む（頼んだこと・結果サマリ・セッションID）
 - 状態表示 = `capture-pane` でペイン末尾を読んで判定。読めないときだけ上の記録を使う
-- 一覧の追随 = `deck-list` の裏で回る見張りが、表示が変わったときだけ fzf に reload を送る（間隔は `DECK_WATCH_INTERVAL`、既定 3 秒。デタッチ中は止まる）
+- 一覧の追随 = `deck-list` の裏で回る見張りが、表示が変わったときだけ fzf に reload（`^R`）を送る（間隔は `DECK_WATCH_INTERVAL`、既定 3 秒。デタッチ中は止まる）
+- ただしリストペインが copy-mode のときは送らない。tmux が `^R` を横取りして検索プロンプト（画面下の黄色い帯 `(search up)`）を開いてしまうため
 - 自動復元 = LaunchAgent がログイン時に `deck restore` を実行
 
 ## アンインストール

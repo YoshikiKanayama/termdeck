@@ -31,6 +31,8 @@ if [[ -n "${TMUX_PANE:-}" ]]; then
       sleep "${DECK_WATCH_INTERVAL:-3}"
       # 誰も見ていない（デタッチ中）なら回さない
       [[ "$(tmux_ display -p -t "$TMUX_PANE" '#{session_attached}' 2>/dev/null)" == 0 ]] && continue
+      # copy-mode 中は ^R を tmux が横取りして検索プロンプト（黄色い帯）を開くので送らない
+      [[ "$(tmux_ display -p -t "$TMUX_PANE" '#{pane_in_mode}' 2>/dev/null)" == 0 ]] || continue
       cur=$(zsh "$DECK" ls 2>/dev/null)
       [[ "$cur" == "$prev" ]] && continue
       prev="$cur"
