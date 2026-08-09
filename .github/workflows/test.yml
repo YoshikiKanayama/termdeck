@@ -1,9 +1,28 @@
 name: test
 
+# public リポジトリなので Actions の従量課金は発生しないが、macOS ランナーは数が限られ
+# 待たされることがある。シェル実装に関係ない変更（ドキュメント・メモ）では走らせない。
+# （GitHub Actions は YAML のアンカー/エイリアスを解釈しないので paths-ignore は各所に書き下す）
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "LICENSE"
+      - "tasks/**"
   pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - "LICENSE"
+      - "tasks/**"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   rotate-test:
