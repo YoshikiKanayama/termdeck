@@ -1,0 +1,122 @@
+name: Dependabot Auto Merge
+
+# Dependabot の依存更新 PR を、CI が通った patch / minor に限って自動マージする。
+#
+# CI の完了をトリガーにしている理由:
+#   - Dependabot が作った PR で pull_request イベントを使うと GITHUB_TOKEN が read-only になり
+#     マージ操作ができない。workflow_run は base ブランチのコンテキストで動くため書き込める
+#   - branch protection（必須ステータスチェック）が使えないプランのため、GitHub 標準の
+#     auto-merge は「チェック待ち」にならず即マージしてしまう。CI 成功を自分で確認する
+#
+# 判断できないものは全て人に回す（fail-closed）。メジャー更新は破壊的変更を含みうるので
+# 必ず人が見る。
+on:
+  workflow_run:
+    workflows: ['test']
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    name: Merge patch / minor updates
+    if: >
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.actor.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      # CI が成功を保証しているのはこのコミットの内容だけ
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+    steps:
+      - name: 対象のPRを検証する
+        id: pr
+        run: |
+          if [ -z "$PR_NUMBER" ]; then
+            echo "workflow_run に紐づくPRがありません。処理を終了します"
+            exit 0
+          fi
+
+          INFO=$(gh pr view "$PR_NUMBER" --repo "$REPO" \
+            --json author,state,headRefOid,isCrossRepository)
+          AUTHOR=$(printf '%s' "$INFO" | jq -r '.author.login')
+          STATE=$(printf '%s' "$INFO" | jq -r '.state')
+          HEAD=$(printf '%s' "$INFO" | jq -r '.headRefOid')
+          FORK=$(printf '%s' "$INFO" | jq -r '.isCrossRepository')
+
+          # CI を実行した本人の PR か、内容が変わっていないかを確かめる。
+          # 同じ head を持つ別 PR を掴んだり、CI 後に push された未検証コミットを
+          # マージしたりしないようにする
+          if [ "$AUTHOR" != "app/dependabot" ] && [ "$AUTHOR" != "dependabot[bot]" ]; then
+            echo "Dependabot 以外のPR（$AUTHOR）のため対象外です"
+            exit 0
+          fi
+          if [ "$STATE" != "OPEN" ]; then
+            echo "PRが open ではありません（$STATE）"
+            exit 0
+          fi
+          if [ "$FORK" != "false" ]; then
+            echo "フォークからのPRのため対象外です"
+            exit 0
+          fi
+          if [ "$HEAD" != "$HEAD_SHA" ]; then
+            echo "CI実行後にPRの内容が変わっています（$HEAD_SHA → $HEAD）。人の確認へ回します"
+            exit 0
+          fi
+
+          echo "verified=true" >> "$GITHUB_OUTPUT"
+
+      - name: 更新の種類を判定する
+        id: semver
+        if: steps.pr.outputs.verified
+        run: |
+          BODY=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq .body)
+
+          # Dependabot は更新ごとに "Bumps ... from A to B" / "Updates ... from A to B" を書く。
+          # バージョンは 1.2.3 とは限らない（GitHub Actions は v4 → v7 のように "4 to 7"）。
+          # リリースノート中の版表記を拾わないよう、更新行だけに絞る
+          PAIRS=$(printf '%s' "$BODY" | grep -E '^(Bumps|Updates) ' \
+            | grep -oE '\bfrom [0-9]+(\.[0-9]+)* to [0-9]+(\.[0-9]+)*' || true)
+          PAIR_COUNT=$(printf '%s' "$PAIRS" | grep -c . || true)
+
+          # 冒頭の "with N updates" とは件数を突き合わせない。
+          # 間接依存は本文に列挙されないため、正常時でも N より少なくなる
+          if [ "$PAIR_COUNT" -eq 0 ]; then
+            echo "更新の版を1件も読み取れませんでした"
+            echo "verdict=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          MAJORS=$(printf '%s\n' "$PAIRS" \
+            | awk '{split($2,a,"."); split($4,b,"."); if (a[1] != b[1]) print $0}')
+
+          if [ -n "$MAJORS" ]; then
+            echo "メジャー更新: $(printf '%s' "$MAJORS" | tr '\n' ' ')"
+            echo "verdict=major" >> "$GITHUB_OUTPUT"
+          else
+            echo "${PAIR_COUNT}件すべて patch / minor と判定しました"
+            echo "verdict=safe" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: マージする（patch / minor）
+        if: steps.semver.outputs.verdict == 'safe'
+        run: |
+          # CI を通したコミットと一致する場合だけマージする
+          gh pr merge "$PR_NUMBER" --repo "$REPO" --merge --match-head-commit "$HEAD_SHA"
+          echo "PR #$PR_NUMBER をマージしました"
+
+      - name: 人の確認へ回す（major / 判定不能）
+        if: steps.semver.outputs.verdict == 'major' || steps.semver.outputs.verdict == 'unknown'
+        run: |
+          if [ "${{ steps.semver.outputs.verdict }}" = "major" ]; then
+            REASON="メジャー更新が含まれるため"
+          else
+            REASON="更新の種類を判定できなかったため"
+          fi
+          gh pr comment "$PR_NUMBER" --repo "$REPO" \
+            --body "CI は通っていますが、${REASON}自動マージを見送りました。内容を確認してマージしてください。"
