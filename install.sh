@@ -105,9 +105,12 @@ if (( DO_LAUNCHD )); then
   # launchd が渡す PATH は最小限で、-lc の非対話シェルでは ~/.zshrc も読まれない。
   # 依存の在り処を足しておかないと tmux が見つからず復元が丸ごと落ちる。
   # $path の並び順のまま絶対パスで拾うので、いま検証したのと同じバイナリが選ばれる
+  # claude は復元したペインで `claude --resume` として実行される（lib/core.zsh の term_revive）。
+  # 依存3つとは別のディレクトリに入っていることがあるので、見つかれば一緒に載せる。
+  # 無くても復元自体は進むため、依存としては必須にしない
   typeset -aU PATH_DIRS=()
   for d in $path; do
-    for dep in $DEPS; do
+    for dep in $DEPS claude; do
       [[ -x "$d/$dep" ]] && { PATH_DIRS+=("${d:a}"); break }
     done
   done

@@ -3,7 +3,8 @@
 <plist version="1.0">
 <dict>
   <!-- ログイン時に deck restore を実行し、前回のターミナル群を claude --resume 込みで立て直す。
-       install.sh が __DECK_ROOT__ / __STATE__ / __LAUNCHD_PATH__ を実パスに置換して ~/Library/LaunchAgents に置く -->
+       プレースホルダは install.sh が実パスへ置換して ~/Library/LaunchAgents に置く
+       （置換対象の名前をこのコメントに書かないこと。値が入り込んで XML コメントを壊しうる） -->
   <key>Label</key>
   <string>com.termdeck.restore</string>
   <key>ProgramArguments</key>
