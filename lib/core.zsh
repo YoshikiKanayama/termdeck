@@ -395,6 +395,7 @@ deck_build() {
   # 再起動するので、リストが落ちても勝手に復活する
   local -a envopts=(-e "DECK_STATE_DIR=$STATE" -e "DECK_SRC=$DECK_SRC")
   [[ -n "${DECK_TMUX_SOCKET:-}" ]] && envopts+=(-e "DECK_TMUX_SOCKET=$DECK_TMUX_SOCKET")
+  [[ -n "${DECK_STATUS_CMD:-}" ]] && envopts+=(-e "DECK_STATUS_CMD=$DECK_STATUS_CMD")
   t new-session -d -s "$DECK_SESSION" -n main -c "$DECK_SRC" -x 220 -y 60 \
     "${envopts[@]}" "zsh '$DECK_ROOT/bin/deck-list'"
   list=$(t display -p -t "=$DECK_SESSION:main" '#{pane_id}')
