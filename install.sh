@@ -27,14 +27,12 @@ done
 
 ng=0
 
+DEPS=(tmux jq fzf)
+
 print "── 依存の確認 ──"
-# LaunchAgent は launchd の最小 PATH で走るので、ここで見つけた実ディレクトリを控えて plist に焼き込む
-typeset -aU DEP_DIRS=()
-for dep in tmux jq fzf; do
-  dep_path=$(command -v "$dep" 2>/dev/null)
-  if [[ -n "$dep_path" ]]; then
+for dep in $DEPS; do
+  if command -v "$dep" >/dev/null 2>&1; then
     print "  ✅ $dep"
-    DEP_DIRS+=("${dep_path:h}")
   else
     print "  ✗ $dep がありません: brew install $dep"
     ng=1
@@ -105,12 +103,25 @@ if (( DO_LAUNCHD )); then
   PLIST="$HOME/Library/LaunchAgents/com.termdeck.restore.plist"
   mkdir -p "${PLIST:h}"
   # launchd が渡す PATH は最小限で、-lc の非対話シェルでは ~/.zshrc も読まれない。
-  # 依存の在り処を足しておかないと tmux が見つからず復元が丸ごと落ちる
-  typeset -aU PATH_DIRS=($DEP_DIRS /usr/bin /bin /usr/sbin /sbin)
+  # 依存の在り処を足しておかないと tmux が見つからず復元が丸ごと落ちる。
+  # $path の並び順のまま絶対パスで拾うので、いま検証したのと同じバイナリが選ばれる
+  typeset -aU PATH_DIRS=()
+  for d in $path; do
+    for dep in $DEPS; do
+      [[ -x "$d/$dep" ]] && { PATH_DIRS+=("${d:a}"); break }
+    done
+  done
+  PATH_DIRS+=(/usr/bin /bin /usr/sbin /sbin)
   LAUNCHD_PATH="${(j.:.)PATH_DIRS}"
-  sed -e "s|__DECK_ROOT__|$ROOT|g" -e "s|__STATE__|$STATE|g" \
-    -e "s|__LAUNCHD_PATH__|$LAUNCHD_PATH|g" \
-    "$ROOT/launchd/com.termdeck.restore.plist.tmpl" > "$PLIST"
+
+  # sed だと置換文字列の & や | が化けるので zsh の置換で埋める。
+  # 値はそのまま XML の中身になるため & < > のエスケープも要る
+  xml_escape() { print -r -- "${${${1//&/&amp;}//</&lt;}//>/&gt;}" }
+  plist_body="$(<"$ROOT/launchd/com.termdeck.restore.plist.tmpl")"
+  plist_body="${plist_body//__DECK_ROOT__/$(xml_escape "$ROOT")}"
+  plist_body="${plist_body//__STATE__/$(xml_escape "$STATE")}"
+  plist_body="${plist_body//__LAUNCHD_PATH__/$(xml_escape "$LAUNCHD_PATH")}"
+  print -r -- "$plist_body" > "$PLIST"
   launchctl bootout "gui/$(id -u)" "$PLIST" 2>/dev/null
   if launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null; then
     print "  ✅ 登録した（次回ログインから有効。外す: install.sh --no-launchd 後に launchctl bootout）"
