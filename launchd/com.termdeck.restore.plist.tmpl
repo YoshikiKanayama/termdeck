@@ -3,7 +3,8 @@
 <plist version="1.0">
 <dict>
   <!-- ログイン時に deck restore を実行し、前回のターミナル群を claude --resume 込みで立て直す。
-       install.sh が __DECK_ROOT__ / __STATE__ を実パスに置換して ~/Library/LaunchAgents に置く -->
+       プレースホルダは install.sh が実パスへ置換して ~/Library/LaunchAgents に置く
+       （置換対象の名前をこのコメントに書かないこと。値が入り込んで XML コメントを壊しうる） -->
   <key>Label</key>
   <string>com.termdeck.restore</string>
   <key>ProgramArguments</key>
@@ -12,6 +13,14 @@
     <string>-lc</string>
     <string>exec zsh '__DECK_ROOT__/bin/deck' restore</string>
   </array>
+  <!-- launchd が渡す PATH は最小限で、-lc の非対話シェルでは ~/.zshrc も読まれない。
+       PATH を書かないと tmux / jq / fzf が見つからず復元が丸ごと落ちる。
+       install.sh がインストール時に解決した実ディレクトリをここへ焼き込む -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>__LAUNCHD_PATH__</string>
+  </dict>
   <key>RunAtLoad</key>
   <true/>
   <key>StandardOutPath</key>

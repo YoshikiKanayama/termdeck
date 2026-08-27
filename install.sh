@@ -27,8 +27,10 @@ done
 
 ng=0
 
+DEPS=(tmux jq fzf)
+
 print "── 依存の確認 ──"
-for dep in tmux jq fzf; do
+for dep in $DEPS; do
   if command -v "$dep" >/dev/null 2>&1; then
     print "  ✅ $dep"
   else
@@ -100,8 +102,29 @@ if (( DO_LAUNCHD )); then
   print "\n── ログイン時の自動復元（LaunchAgent）──"
   PLIST="$HOME/Library/LaunchAgents/com.termdeck.restore.plist"
   mkdir -p "${PLIST:h}"
-  sed -e "s|__DECK_ROOT__|$ROOT|g" -e "s|__STATE__|$STATE|g" \
-    "$ROOT/launchd/com.termdeck.restore.plist.tmpl" > "$PLIST"
+  # launchd が渡す PATH は最小限で、-lc の非対話シェルでは ~/.zshrc も読まれない。
+  # 依存の在り処を足しておかないと tmux が見つからず復元が丸ごと落ちる。
+  # $path の並び順のまま絶対パスで拾うので、いま検証したのと同じバイナリが選ばれる
+  # claude は復元したペインで `claude --resume` として実行される（lib/core.zsh の term_revive）。
+  # 依存3つとは別のディレクトリに入っていることがあるので、見つかれば一緒に載せる。
+  # 無くても復元自体は進むため、依存としては必須にしない
+  typeset -aU PATH_DIRS=()
+  for d in $path; do
+    for dep in $DEPS claude; do
+      [[ -x "$d/$dep" ]] && { PATH_DIRS+=("${d:a}"); break }
+    done
+  done
+  PATH_DIRS+=(/usr/bin /bin /usr/sbin /sbin)
+  LAUNCHD_PATH="${(j.:.)PATH_DIRS}"
+
+  # sed だと置換文字列の & や | が化けるので zsh の置換で埋める。
+  # 値はそのまま XML の中身になるため & < > のエスケープも要る
+  xml_escape() { print -r -- "${${${1//&/&amp;}//</&lt;}//>/&gt;}" }
+  plist_body="$(<"$ROOT/launchd/com.termdeck.restore.plist.tmpl")"
+  plist_body="${plist_body//__DECK_ROOT__/$(xml_escape "$ROOT")}"
+  plist_body="${plist_body//__STATE__/$(xml_escape "$STATE")}"
+  plist_body="${plist_body//__LAUNCHD_PATH__/$(xml_escape "$LAUNCHD_PATH")}"
+  print -r -- "$plist_body" > "$PLIST"
   launchctl bootout "gui/$(id -u)" "$PLIST" 2>/dev/null
   if launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null; then
     print "  ✅ 登録した（次回ログインから有効。外す: install.sh --no-launchd 後に launchctl bootout）"
